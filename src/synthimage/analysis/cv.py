@@ -140,3 +140,44 @@ def paired_metric_diff_ci(x, oof_a, oof_b, metric, n=N_BOOT, seed=0):
         ix = np.concatenate([by[c] for c in rng.choice(ids, len(ids))])
         diffs.append(metric_val(metric, y[ix], oof_b[ix]) - metric_val(metric, y[ix], oof_a[ix]))
     return float(np.mean(diffs)), (float(np.percentile(diffs, 2.5)), float(np.percentile(diffs, 97.5)))
+
+
+def paired_probe_delta_effect_ci(ids, diffs_a, diffs_b, n=N_BOOT, seed=0):
+    """Bootstrap the difference in paired Cohen's d between two measuring instruments (e.g. two probes) applied
+    to the SAME content ids, using one shared resample per draw so the comparison is genuinely paired rather
+    than inferred from two separate, independently-resampled CIs. diffs_a/diffs_b: pandas Series of per-content
+    (fake - real) differences, indexed by content_id (the second return value of cohen_paired), for the same
+    generator under instrument A and instrument B respectively. Returns (mean delta_d, 95% CI) where
+    delta_d = d_b - d_a."""
+    rng = np.random.default_rng(seed)
+    deltas = []
+    for _ in range(n):
+        resampled = rng.choice(ids, len(ids), replace=True)
+        da = diffs_a.loc[resampled].values; db = diffs_b.loc[resampled].values
+        d_a = da.mean() / (da.std(ddof=1) + 1e-12)
+        d_b = db.mean() / (db.std(ddof=1) + 1e-12)
+        deltas.append(d_b - d_a)
+    return float(np.mean(deltas)), (float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5)))
+
+
+def paired_probe_delta_auroc_ci(x_a, oof_a_base, oof_a_ext, x_b, oof_b_base, oof_b_ext, n=N_BOOT, seed=0):
+    """Bootstrap the difference, across two measuring instruments, of the incremental AUROC gain from adding one
+    feature on top of a base feature set -- i.e. does an instrument swap change how much incremental predictive
+    value a feature contributes, not just its raw effect size. x_a/x_b: dataframes (content_id, label) for
+    instrument A/B, covering the same content ids. oof_*_base/ext: out-of-fold predictions (already fit once via
+    grouped_cv_auc/paired_grouped_cv, not refit per bootstrap draw) aligned to x_a's/x_b's row order. One shared
+    content-id resample per draw. Returns (mean delta_delta_AUROC, 95% CI) where
+    delta_delta_AUROC = (AUROC_b_ext - AUROC_b_base) - (AUROC_a_ext - AUROC_a_base)."""
+    ids = np.array(sorted(x_a.content_id.unique()))
+    by_a = {c: np.where(x_a.content_id.values == c)[0] for c in ids}
+    by_b = {c: np.where(x_b.content_id.values == c)[0] for c in ids}
+    y_a = x_a.label.values; y_b = x_b.label.values
+    rng = np.random.default_rng(seed)
+    deltas = []
+    for _ in range(n):
+        resampled = rng.choice(ids, len(ids), replace=True)
+        ix_a = np.concatenate([by_a[c] for c in resampled]); ix_b = np.concatenate([by_b[c] for c in resampled])
+        delta_a = roc_auc_score(y_a[ix_a], oof_a_ext[ix_a]) - roc_auc_score(y_a[ix_a], oof_a_base[ix_a])
+        delta_b = roc_auc_score(y_b[ix_b], oof_b_ext[ix_b]) - roc_auc_score(y_b[ix_b], oof_b_base[ix_b])
+        deltas.append(delta_b - delta_a)
+    return float(np.mean(deltas)), (float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5)))

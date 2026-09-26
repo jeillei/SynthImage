@@ -4,26 +4,26 @@ docs/research_history/reviewer_validation/REVIEWER_VALIDATION_PLAN.md for the fu
 derangement definition, and decision rule -- frozen before this script was run.
 
 Mode A (correct caption) is reused verbatim from results/stage_decomposition/panel_features_dit.json (already
-committed, same protocol). Modes B (null) and C (shuffled) are computed here with the same frozen SD15Probe,
-same steps/guidance/canonicalization -- only the text conditioning changes. Raw per-image outputs go to
-results/reviewer_validation/cache/ (gitignored, resumable); only the aggregated summary CSV and plot are
-committed."""
+committed, same protocol). Modes B (null) and C (shuffled) are computed once with the same frozen SD15Probe
+(same steps/guidance/canonicalization -- only the text conditioning changes) and then persisted to the compact,
+committed results/reviewer_validation/conditioning_features.csv -- every subsequent run (including
+scripts/reproduce/final_analysis.py) reads that committed table and never needs a probe or a GPU again. Raw
+per-image intermediate outputs go to results/reviewer_validation/cache/ (gitignored, resumable)."""
 from __future__ import annotations
 import json
 from pathlib import Path
-import numpy as np, pandas as pd, matplotlib
+import numpy as np, pandas as pd
+import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score
-from synthimage.data.loading import load
-from synthimage.probes.sd15 import SD15Probe
-from synthimage.features.panel_v2 import path_length, diffpath_curvature, score_norm_step0
 from synthimage.analysis.cv import cohen_paired, boot_ci, paired_grouped_cv, paired_diff_ci
 
 CACHE = Path("results/reviewer_validation/cache"); CACHE.mkdir(parents=True, exist_ok=True)
 OUT = Path("results/reviewer_validation"); PLOTS = OUT / "plots"; PLOTS.mkdir(parents=True, exist_ok=True)
 MANIFEST = "data/caption_matched/manifest.csv"
 CORRECT_SOURCE = "results/stage_decomposition/panel_features_dit.json"
+FEATURES_TABLE = OUT / "conditioning_features.csv"
 VAE_FEATS = ["lpips_ae", "pixel_mse_ae", "latent_mse_ae"]
 GENERATORS = ["sd15", "sdxl", "pixart_dit", "amused"]  # primary: sd15, sdxl, pixart_dit; secondary: amused
 
@@ -38,7 +38,9 @@ def deranged_captions(manifest: pd.DataFrame) -> dict:
 
 
 def extract_mode(manifest: pd.DataFrame, mode: str, shuffled: dict | None) -> list[dict]:
-    """mode: 'null' or 'shuffled'. Resumable: skips rows already cached."""
+    """GPU-dependent. mode: 'null' or 'shuffled'. Resumable: skips rows already cached. Only runs if
+    results/reviewer_validation/cache/panel_features_{mode}.json is incomplete -- once
+    conditioning_features.csv is committed, nothing here needs to run again."""
     out_path = CACHE / f"panel_features_{mode}.json"
     done = json.loads(out_path.read_text()) if out_path.exists() else []
     have = {(r["generator"], r["content_id"]) for r in done}
@@ -46,6 +48,9 @@ def extract_mode(manifest: pd.DataFrame, mode: str, shuffled: dict | None) -> li
     print(f"[{mode}] {len(done)}/{len(manifest)} already done; {len(pending)} to extract")
     if not pending:
         return done
+    from synthimage.data.loading import load
+    from synthimage.probes.sd15 import SD15Probe
+    from synthimage.features.panel_v2 import path_length, diffpath_curvature, score_norm_step0
     probe = SD15Probe(steps=6)
     for i, r in enumerate(pending, 1):
         x = load(r["path"], 256, 17)
@@ -76,6 +81,32 @@ def sub(d, gen):
     x = d[(d.label == 0) | (d.generator == gen)]
     ok = x.groupby("content_id").label.nunique()
     return x[x.content_id.isin(ok[ok == 2].index)].reset_index(drop=True)
+
+
+def build_features_table() -> pd.DataFrame:
+    """Extraction stage: mode A reused verbatim, modes B/C from cache (running extract_mode first if the cache
+    is incomplete). Writes the compact, committed feature table."""
+    manifest = pd.read_csv(MANIFEST)
+    shuffled = deranged_captions(manifest)
+
+    correct_rows = json.load(open(CORRECT_SOURCE))
+    vae_by_key = {(r["generator"], r["content_id"]): {f: r["features"][f] for f in VAE_FEATS} for r in correct_rows}
+    correct_frame = pd.DataFrame([{"condition": "correct", "generator": r["generator"], "content_id": r["content_id"],
+                                    "label": r["label"], "path_length": r["features"]["path_length"],
+                                    "diffpath_curvature": r["features"]["diffpath_curvature"],
+                                    "score_norm_step0": r["features"]["score_norm_step0"], **vae_by_key[(r["generator"], r["content_id"])]}
+                                   for r in correct_rows])
+
+    null_rows = extract_mode(manifest, "null", None)
+    shuffled_rows = extract_mode(manifest, "shuffled", shuffled)
+    null_frame = build_condition_frame("null", null_rows, vae_by_key)
+    shuffled_frame = build_condition_frame("shuffled", shuffled_rows, vae_by_key)
+
+    all_df = pd.concat([correct_frame, null_frame, shuffled_frame], ignore_index=True)
+    assert set(all_df.groupby(["generator", "content_id"]).condition.nunique().unique()) == {3}, \
+        "every generator/content_id pair must have all three conditions"
+    all_df.to_csv(FEATURES_TABLE, index=False)
+    return all_df
 
 
 def analyze(all_df: pd.DataFrame) -> pd.DataFrame:
@@ -132,32 +163,31 @@ def plot(summary: pd.DataFrame) -> None:
     fig.tight_layout(); fig.savefig(PLOTS / "conditioning_ablation.png", dpi=140); plt.close(fig)
 
 
-def main():
-    manifest = pd.read_csv(MANIFEST)
-    shuffled = deranged_captions(manifest)
-
-    correct_rows = json.load(open(CORRECT_SOURCE))
-    vae_by_key = {(r["generator"], r["content_id"]): {f: r["features"][f] for f in VAE_FEATS} for r in correct_rows}
-    correct_frame = pd.DataFrame([{"condition": "correct", "generator": r["generator"], "content_id": r["content_id"],
-                                    "label": r["label"], "path_length": r["features"]["path_length"],
-                                    "diffpath_curvature": r["features"]["diffpath_curvature"],
-                                    "score_norm_step0": r["features"]["score_norm_step0"], **vae_by_key[(r["generator"], r["content_id"])]}
-                                   for r in correct_rows])
-
-    null_rows = extract_mode(manifest, "null", None)
-    shuffled_rows = extract_mode(manifest, "shuffled", shuffled)
-    null_frame = build_condition_frame("null", null_rows, vae_by_key)
-    shuffled_frame = build_condition_frame("shuffled", shuffled_rows, vae_by_key)
-
-    all_df = pd.concat([correct_frame, null_frame, shuffled_frame], ignore_index=True)
-    assert set(all_df.groupby(["generator", "content_id"]).condition.nunique().unique()) == {3}, \
-        "every generator/content_id pair must have all three conditions"
-
+def run_from_features(features_path: Path = FEATURES_TABLE) -> None:
+    """No GPU, no probe, no model download: reads the committed compact feature table and reproduces the
+    summary table and figure. This is the entry point scripts/reproduce/final_analysis.py calls."""
+    # keep_default_na=False: the "null" conditioning-mode label is a literal string, not a missing value --
+    # pandas' default na_values list otherwise silently turns it into NaN.
+    all_df = pd.read_csv(features_path, keep_default_na=False)
     summary = analyze(all_df)
     summary.to_csv(OUT / "conditioning_summary.csv", index=False)
     plot(summary)
     print(summary.round(3).to_string(index=False))
     print("\nwrote", OUT / "conditioning_summary.csv", "and", PLOTS / "conditioning_ablation.png")
+
+
+def main():
+    """Full pipeline: extracts null/shuffled values if not already cached, writes the compact committed feature
+    table, then runs the same GPU-free analysis as run_from_features. `--from-features` skips straight to the
+    GPU-free analysis (used by scripts/reproduce/final_analysis.py, which must never touch a probe)."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from-features", action="store_true",
+                     help="skip extraction; analyze the already-committed conditioning_features.csv only")
+    a = ap.parse_args()
+    if not a.from_features:
+        build_features_table()
+    run_from_features()
 
 
 if __name__ == "__main__":
