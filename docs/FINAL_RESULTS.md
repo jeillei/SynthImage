@@ -189,11 +189,15 @@ into a stronger claim than the data supports.
 - All generator comparisons use **one frozen probe (SD1.5)** measuring the candidate generator's *output pixels*
   — the candidate generator itself never needs to be a diffusion model, but every measurement is filtered
   through SD1.5's own VAE/UNet, which is itself one specific, dated checkpoint. A reviewer-motivated cross-probe
-  stress test (SD1.5 vs. a second, independent SDXL probe) found that `path_length`'s *raw effect magnitude* is
-  probe-dependent for at least one generator (the SDXL probe finds roughly double the effect on SDXL-generated
-  images that the SD1.5 probe does), though the *qualitative* incremental-value pattern — which generators show
-  trajectory information beyond VAE+score, and which do not — is unchanged across both probes. Full detail:
-  `docs/research_history/reviewer_validation/REVIEWER_VALIDATION_RESULTS.md` (Experiment 2).
+  stress test (SD1.5 vs. a second, independently trained SDXL probe — both are UNet latent-diffusion systems,
+  not architecturally independent probes) found `path_length`'s *raw effect magnitude* is probe-dependent for
+  the sdxl and amused generators specifically (a direct paired bootstrap gives a 95% CI excluding zero for the
+  probe-to-probe difference in effect size), in a pattern with no clean symmetric probe-family explanation. The
+  *incremental*-value question — does `path_length` add predictive value beyond VAE+score, and for which
+  generators — is not statistically distinguishable between the two probes for any generator (every direct
+  ΔΔAUROC 95% CI includes zero). Full detail:
+  `docs/research_history/reviewer_validation/REVIEWER_VALIDATION_RESULTS.md` (Experiment 2, classified P4 —
+  mixed).
 - Every generated image shares its exact generation caption with the caption later supplied to the probe during
   measurement, raising a caption-conditioning confound. A reviewer-motivated ablation (null and shuffled-caption
   conditioning) found the effect and its incremental value are essentially unchanged (retention 0.97–1.05 of the
@@ -238,11 +242,13 @@ caption–image compatibility rather than provenance, and that it reflects SD1.5
 than an image-intrinsic property — were tested directly after this document was first written (§10, and in full
 in `docs/research_history/reviewer_validation/REVIEWER_VALIDATION_RESULTS.md`). Neither test found grounds to
 retract the qualitative claim above: it survives removing or scrambling the conditioning caption, and it survives
-substituting a second, architecturally independent probe. The one genuine refinement is that `path_length`'s raw
-effect *magnitude* — not its sign, and not which generators show incremental value — is probe-dependent for at
-least the SDXL generator/probe pairing, so it is described here as a **generator-dependent trajectory signal
-under a frozen diffusion probe**, not an architecture-intrinsic fingerprint independent of the measuring
-instrument.
+substituting a second, independently trained SDXL probe from the same broad UNet latent-diffusion family (not an
+architecturally independent probe — that stress test remains to be done). A direct paired bootstrap shows
+`path_length`'s raw effect *magnitude* — not its sign, and not its incremental value, which is statistically
+indistinguishable between the two probes for every generator tested — is probe-dependent for the sdxl and
+amused generators specifically, in a pattern with no clean symmetric probe-family explanation (classified P4 —
+mixed, not a probe-family-affinity reframing). It is therefore described here as a **generator-dependent
+trajectory signal under a frozen diffusion probe**, not an instrument-independent image property.
 
 ## Future work
 

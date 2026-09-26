@@ -29,11 +29,12 @@ adds genuinely new information beyond the earlier ones, and for which generator 
    generators tested (SD1.5, SDXL) but not for the one Diffusion Transformer tested (PixArt-Sigma)** — ruling out
    the simplest "diffusion models generically show this" hypothesis, though not yet a class-general claim about
    UNets vs. DiTs.
-4. **That architecture split is explained by one specific feature: `path_length`.** Cross-fitted residualization
-   shows `path_length` carries information independent of VAE-level features for SD1.5/SDXL but not PixArt-Sigma,
-   and decomposing SDXL's trajectory-stage gain shows `path_length` alone reproduces essentially all of it —
-   `diffpath_curvature`'s own marginal contribution is not distinguishable from zero anywhere in that
-   decomposition.
+4. **`path_length` accounts for the observed difference in trajectory-stage incremental performance between
+   SDXL and PixArt-Sigma.** Cross-fitted residualization shows `path_length` carries information independent of
+   VAE-level features for SD1.5/SDXL but not PixArt-Sigma, and decomposing SDXL's trajectory-stage gain shows
+   `path_length` alone reproduces essentially all of it — `diffpath_curvature`'s own marginal contribution is not
+   distinguishable from zero anywhere in that decomposition. (The two UNets tested behave similarly and the one
+   DiT tested differs; three checkpoints are not enough to generalize this into a UNet-vs-DiT law.)
 5. **`path_length`'s signal is realistic-transformation-robust.** Across 14 transformation conditions
    (JPEG/blur/resize/noise/color-jitter/crop) × SD1.5/SDXL (28 condition/generator combinations), its
    effect (beyond the VAE features) survived in 27/28 and its incremental AUROC contribution survived in all 28 — and a
@@ -156,12 +157,12 @@ not yet shown to generalize to Diffusion Transformers in general. Full discussio
 ## Reviewer-validation extension (v1.1)
 
 Two alternative explanations for the `path_length` result — that it reflects caption–image compatibility rather
-than provenance, or SD1.5-probe-specific affinity rather than an image-intrinsic property — were stress-tested
-after the v1.0 study was tagged. Both hold up, with one honest nuance:
+than provenance, or probe-specific affinity rather than an image-intrinsic property — were stress-tested after
+the v1.0 study was tagged, then tightened with a direct paired-bootstrap cross-probe test (v1.1.1):
 
 | | |
 |---|---|
-| ![conditioning ablation](results/reviewer_validation/plots/conditioning_ablation.png) The effect is essentially unchanged under null or shuffled-caption conditioning | ![probe swap](results/reviewer_validation/plots/probe_swap_matrix.png) A second, independent SDXL probe finds the same qualitative pattern, though raw magnitude is probe-dependent for SDXL |
+| ![conditioning ablation](results/reviewer_validation/plots/conditioning_ablation.png) The effect is essentially unchanged under null or shuffled-caption conditioning | ![probe swap](results/reviewer_validation/plots/probe_swap_matrix.png) A second, independently trained SDXL probe (same UNet latent-diffusion family) finds the same *incremental-value* pattern; raw effect *magnitude* is probe-dependent for two of four generators |
 
 Full preregistration and results: **[`docs/research_history/reviewer_validation/`](docs/research_history/reviewer_validation/)**.
 
